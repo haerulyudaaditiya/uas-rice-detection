@@ -1,7 +1,6 @@
 import streamlit as st
-import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import os
 
 # Coba import YOLO dari ultralytics, jika gagal gunakan demo mode
@@ -80,35 +79,32 @@ with col1:
     st.subheader("Input Citra Beras")
     input_source = st.radio("Pilih Metode Input:", ["Unggah File", "Gunakan Kamera"], horizontal=True)
     
-    img_rgb = None
+    img_pil = None
     uploaded_file = None
     
     if input_source == "Unggah File":
         uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
         if uploaded_file is not None:
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img_pil = Image.open(uploaded_file).convert("RGB")
             
     elif input_source == "Gunakan Kamera":
         uploaded_file = st.camera_input("Ambil foto...")
         if uploaded_file is not None:
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img_pil = Image.open(uploaded_file).convert("RGB")
 
-    if img_rgb is not None:
+    if img_pil is not None:
         st.write("")
         st.subheader("Hasil Visualisasi Deteksi")
         
         if model_loaded:
-            # Inference dengan model YOLOv8 riil
-            results = model.predict(source=img_rgb, conf=conf_threshold, iou=iou_threshold)
+            # Inference dengan model YOLOv8 riil (ultralytics menerima PIL Image)
+            results = model.predict(source=img_pil, conf=conf_threshold, iou=iou_threshold)
             result = results[0]
             
-            # Anotasi citra
+            # Anotasi citra - result.plot() mengembalikan numpy BGR array
             annotated_img = result.plot()
-            annotated_img_rgb = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
+            # Konversi BGR ke RGB menggunakan numpy (tanpa cv2)
+            annotated_img_rgb = annotated_img[:, :, ::-1]
             
             # Hitung jumlah per kelas
             class_counts = {c: 0 for c in CLASSES}
@@ -121,8 +117,9 @@ with col1:
         else:
             # Mode simulasi (jika model tidak dimuat)
             st.warning("Menampilkan hasil simulasi (Mode Demo Aktif).")
-            sim_img = img_rgb.copy()
-            h, w, _ = sim_img.shape
+            sim_img = img_pil.copy()
+            draw = ImageDraw.Draw(sim_img)
+            w, h = sim_img.size
             
             # Koordinat box simulasi relatif
             mock_boxes = [
@@ -139,18 +136,19 @@ with col1:
             for x1, y1, x2, y2, cls_name, conf in mock_boxes:
                 class_counts[cls_name] += 1
                 color = CLASS_COLORS.get(cls_name, (255, 255, 255))
-                cv2.rectangle(sim_img, (x1, y1), (x2, y2), color, 3)
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
                 label_text = f"{cls_name} {conf:.2f}"
-                (txt_w, txt_h), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(sim_img, (x1, y1 - txt_h - 10), (x1 + txt_w, y1), color, -1)
-                cv2.putText(sim_img, label_text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                # Gambar label background
+                bbox = draw.textbbox((x1, y1 - 15), label_text)
+                draw.rectangle([bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2], fill=color)
+                draw.text((x1, y1 - 15), label_text, fill=(0, 0, 0))
                 
             st.image(sim_img, caption="Hasil Deteksi Simulasi (Demo)", width="stretch")
 
 with col2:
     st.subheader("Rincian Deteksi")
     
-    if img_rgb is not None:
+    if img_pil is not None:
         df_data = []
         for cls, count in class_counts.items():
             if count > 0:
